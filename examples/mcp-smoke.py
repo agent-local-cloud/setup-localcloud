@@ -26,11 +26,14 @@ async def main():
             values = environment.structuredContent['result']
             assert values['GOOGLE_CLOUD_PROJECT'] == os.environ['GOOGLE_CLOUD_PROJECT']
             assert values['BIGQUERY_EMULATOR_HOST'] == os.environ['BIGQUERY_EMULATOR_HOST']
-            query = await session.call_tool('localcloud_query_data', {'service': 'bigquery', 'sql': 'SELECT 1 AS ok', 'project': connection['project']})
-            assert not query.isError
-            result = json.loads(query.structuredContent['result'])
-            assert result.get('row_count') == 1 or len(result.get('rows', [])) == 1, result
-            print('MCP initialize, tools/resources, SDK environment and local SQL passed')
+            # localcloud_query_data runs Cloud SQL only in current runtimes, so the selected services are checked
+            # through the read-only service listing instead.
+            listing = await session.call_tool('localcloud_list_services', {})
+            assert not listing.isError
+            services = {service['id']: service for service in listing.structuredContent['result']['services']}
+            for service_id in os.environ.get('INPUT_SERVICES', 'gcs,pubsub,bigquery').split(','):
+                assert services[service_id]['enabled'] and services[service_id]['callable'], services.get(service_id)
+            print('MCP initialize, tools/resources, SDK environment and selected services passed')
 
 
 asyncio.run(main())

@@ -21,6 +21,8 @@ inputs:
   port-map:
     description: JSON canonical-to-published port map for an existing runtime, for example '{"5380":15380,"5383":15383}'.
     default: '{}'
+  control-token:
+    description: The runtime's control token (32+ printable ASCII characters). Required for an existing runtime with remote access on, such as a container-job service with LOCALCLOUD_MCP_ALLOW_REMOTE; set the same value as its LOCALCLOUD_CONTROL_TOKEN. For an owned runtime it is passed through and enforced. Masked in logs.
   docker-access:
     description: Opt in to runner Docker socket access for native execution. Creates an isolated network and owned data volume; grants the runtime access to the runner Docker host.
     default: 'false'

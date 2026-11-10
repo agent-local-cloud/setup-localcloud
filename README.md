@@ -135,6 +135,7 @@ Use Node 24 and `node --test`. There are no npm runtime dependencies or generate
 | `image-cache` | Optional restored OCI layout; requires an `image` pinned by digest. The pinned root, platform, config and layers are verified before importing; otherwise use the Docker store or registry. |
 | `port-map` | Existing-runtime canonical-to-published JSON port mapping. For `runtime-url: http://127.0.0.1:15380`, use `'{"5380":15380,"5382":15382,"5383":15383,"5388":15388}'` for the example profile. |
 | `docker-access` | Default `'false'`; opt in to runner Docker socket access for native execution. Runtime prerequisites come from the image catalog. |
+| `control-token` | The runtime's control token (32+ printable ASCII characters). Needed for an existing runtime with remote access on, such as a container-job service with `LOCALCLOUD_MCP_ALLOW_REMOTE`; use the same value as its `LOCALCLOUD_CONTROL_TOKEN`. Masked in logs. |
 | `mcp` | Default `'false'`; create a job-local read-only MCP configuration attached to this gateway/project. No CLI installation. |
 
 Outputs include `image-digest` (the exact image started, including what `ci` resolved to), `network`, `env-file`, `docker-env-file`, `mcp-url` and `mcp-config`, in addition to the gateway/container/project outputs. Use `docker-env-file` and the owned `network` when launching an application container; host loopback settings do not work inside it. The full guide explains lifecycle ownership and per-client SDK configuration.

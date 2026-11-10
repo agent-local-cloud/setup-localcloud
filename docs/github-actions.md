@@ -365,6 +365,7 @@ These inputs and outputs were added in `v0.1.1`.
 | `image-cache` | Path to a restored OCI image layout. Requires `image` pinned by digest. The action verifies the requested digest, selected platform and image blobs before importing it. Omit for ordinary Docker image reuse. |
 | `port-map` | JSON canonical-to-published port mapping for an existing HTTP runtime, such as `{"5380":15380,"5382":15382,"5383":15383,"5388":15388}` with `runtime-url: http://127.0.0.1:15380`. Include every selected endpoint that uses a remapped listener. |
 | `docker-access` | Explicitly set `'true'` for native Dataproc, Cloud Run or GKE execution. This mounts the runner’s Docker socket and grants the runtime Docker host access. Keep it off for ordinary SDK tests. The runtime reports its own prerequisite requirements. |
+| `control-token` | The runtime’s control token, 32 or more printable ASCII characters. Needed for an existing runtime with remote access on (see below); set the same value as its `LOCALCLOUD_CONTROL_TOKEN`. Masked in logs and passed to the MCP bridge. |
 | `mcp` | Set `'true'` to generate a job-local read-only MCP configuration attached to this runtime and project. No CLI or second runtime is installed. |
 
 ### Reduce image pulls
@@ -399,7 +400,29 @@ With `mcp: 'true'`, pass `steps.localcloud.outputs.mcp-config` to a client suppo
 
 For native container jobs, use the service-name gateway and explicitly permit MCP traffic on that isolated job network in the service environment with `LOCALCLOUD_MCP_ALLOW_REMOTE: 'true'`. Keep both `LOCALCLOUD_MCP_WRITE` and `LOCALCLOUD_MCP_DESTRUCTIVE` false. Do not expose that service publicly.
 
-The action’s checks cover SDK operations on the runner and in application containers, service-catalog configuration, real MCP client discovery/query and owned cleanup. Follow the [action evidence ledger](https://github.com/cloud-orbitor/setup-localcloud/blob/main/docs/release-evidence.md) for the tested revision and any runtime-specific limits.
+Remote access turns on LocalCloud’s control token, so every control route (`/services`, `/projects`, `/env`, `/mcp`) then needs it. Give the service container a token and pass the same value to the action:
+
+```yaml
+services:
+  localcloud:
+    image: agentcloud/localcloud:ci
+    env:
+      LOCALCLOUD_SERVICES: gcs,pubsub,bigquery
+      LOCALCLOUD_MCP_ALLOW_REMOTE: 'true'
+      LOCALCLOUD_CONTROL_TOKEN: ${{ secrets.LOCALCLOUD_CONTROL_TOKEN }}
+steps:
+  - uses: cloud-orbitor/setup-localcloud@v0.1.1
+    with:
+      runtime-url: http://localcloud:5380
+      mcp: 'true'
+      control-token: ${{ secrets.LOCALCLOUD_CONTROL_TOKEN }}
+```
+
+The token must be at least 32 printable ASCII characters without spaces, double quotes, commas, semicolons or backslashes. Fork pull requests don’t receive repository secrets; on an isolated job network a per-run value such as `ci-${{ github.run_id }}-${{ github.run_attempt }}-localcloud-token` also works. Without the token, setup fails with a message naming the `control-token` input.
+
+The action confirms MCP is read-only by checking that the runtime does not list its write or destructive tools (LocalCloud lists them only when `LOCALCLOUD_MCP_WRITE` or `LOCALCLOUD_MCP_DESTRUCTIVE` is on).
+
+The action’s checks cover SDK operations on the runner and in application containers, service-catalog configuration, a real MCP client’s discovery, environment and service listing, and owned cleanup. Follow the [action evidence ledger](https://github.com/cloud-orbitor/setup-localcloud/blob/main/docs/release-evidence.md) for the tested revision and any runtime-specific limits.
 
 ## Workflow evidence and support
 

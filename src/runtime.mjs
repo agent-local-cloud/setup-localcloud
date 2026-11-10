@@ -42,8 +42,11 @@ export function options(env = process.env) {
     ports['5380']=gatewayPort;
     url = parsed.origin;
   }
+  const controlToken = get('control-token');
+  // LocalCloud's control-token rules: at least 32 printable ASCII characters, none of space " , ; or \.
+  if (controlToken && (controlToken.length < 32 || !/^[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]+$/.test(controlToken))) throw Error('control-token must be at least 32 printable ASCII characters without spaces, double quotes, commas, semicolons or backslashes');
   const boolean = name => {const value=get(name,'false');if(!['true','false'].includes(value))throw Error(`${name} must be true or false`);return value==='true';};
-  return { services, project, seconds, image, url, ports, imageCache:get('image-cache'), dockerAccess:boolean('docker-access'), mcp:boolean('mcp') };
+  return { services, project, seconds, image, url, ports, imageCache:get('image-cache'), controlToken, dockerAccess:boolean('docker-access'), mcp:boolean('mcp') };
 }
 
 export function docker(args) {
@@ -126,6 +129,7 @@ export function startRuntime(config, { command = docker, stateFile = process.env
   const labels={[OWNER_LABEL]:owner,'com.localcloud.managed':'true','com.localcloud.volume-name':record.volume,'com.localcloud.config-hash':record.hash};
   const labelArgs=Object.entries(labels).flatMap(([key,value])=>['--label',`${key}=${value}`]);
   const args = ['run', '--platform', `${platform.os}/${platform.architecture}`, '-d', '--pull', 'never', '--name', name, ...labelArgs, '--network',record.network,'--network-alias','localcloud','--mount',`type=volume,src=${record.volume},dst=/var/lib/localcloud`, '--memory', '4g', '-e', `LOCALCLOUD_SERVICES=${config.services.join(',')}`, '-e', `LOCALCLOUD_PROJECT=${config.project}`, '-e', `LOCALCLOUD_DOCKER_ACCESS=${config.dockerAccess}`, '-e', 'LOCALCLOUD_TELEMETRY=false','-e',`LOCALCLOUD_RUNTIME_NETWORK=${record.network}`,'-e',`LOCALCLOUD_DATA_VOLUME=${record.volume}`,'-e',`LOCALCLOUD_CONFIG_HASH=${record.hash}`,'-e','LOCALCLOUD_MCP_WRITE=false','-e','LOCALCLOUD_MCP_DESTRUCTIVE=false'];
+  if(config.controlToken) args.push('-e',`LOCALCLOUD_CONTROL_TOKEN=${config.controlToken}`);
   if(config.dockerAccess) args.push('--mount','type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock','-e','DOCKER_HOST=unix:///var/run/docker.sock');
   for (const port of ports) args.push('-p', `127.0.0.1::${port}`);
   try {
@@ -147,12 +151,15 @@ export function startRuntime(config, { command = docker, stateFile = process.env
   }
 }
 
-async function request(url, { method = 'GET', body, milliseconds = 10_000 } = {}) {
-  const response = await fetch(url, { method, redirect: 'error', signal: AbortSignal.timeout(milliseconds), headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+async function request(url, { method = 'GET', body, milliseconds = 10_000, token = '', headers = {} } = {}) {
+  const response = await fetch(url, { method, redirect: 'error', signal: AbortSignal.timeout(milliseconds), headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { 'X-LocalCloud-Control-Token': token } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const text = await response.text();
   if (text.length > 1024 * 1024) throw new Error('LocalCloud response exceeds 1 MiB');
   if (!response.ok) {
-    const error = new Error(`LocalCloud ${method} ${new URL(url).pathname} returned HTTP ${response.status}: ${text.slice(0,800)}`);
+    const tokenHint = response.status === 401 && /control token/i.test(text)
+      ? (token ? 'The control-token input does not match the runtime\'s control token. ' : 'This runtime requires its control token (it is on whenever remote access is enabled). Pass the same value as the runtime\'s LOCALCLOUD_CONTROL_TOKEN through the control-token input. ')
+      : '';
+    const error = new Error(`${tokenHint}LocalCloud ${method} ${new URL(url).pathname} returned HTTP ${response.status}: ${text.slice(0,800)}`);
     error.status = response.status;
     throw error;
   }
@@ -160,11 +167,12 @@ async function request(url, { method = 'GET', body, milliseconds = 10_000 } = {}
 }
 
 export async function configure(config, runtime) {
+  const call = (url, settings = {}) => request(url, { ...settings, token: config.controlToken });
   const deadline = Date.now() + config.seconds * 1000;
   let last = 'no readiness response';
   let catalog;
   while(Date.now()<deadline) {
-    try {catalog=await request(`${runtime.url}/services`,{milliseconds:Math.max(1,Math.min(5000,deadline-Date.now()))});break;}
+    try {catalog=await call(`${runtime.url}/services`,{milliseconds:Math.max(1,Math.min(5000,deadline-Date.now()))});break;}
     catch(error) {if(error.status && error.status!==503)throw error;last=error.message;await delay(Math.min(1000,Math.max(0,deadline-Date.now())));}
   }
   if(!Array.isArray(catalog?.services)) throw Error(`LocalCloud service catalog unavailable: ${last}`);
@@ -182,7 +190,7 @@ export async function configure(config, runtime) {
   runtime.endpointKeys=new Set(catalog.services.map(s=>s.env_var).filter(key=>typeof key==='string' && key.endsWith('_HOST')));
   while (Date.now() < deadline) {
     try {
-      const ready = await request(`${runtime.url}/readiness?services=${config.services.join(',')}`, { milliseconds: Math.max(1, Math.min(5000, deadline - Date.now())) });
+      const ready = await call(`${runtime.url}/readiness?services=${config.services.join(',')}`, { milliseconds: Math.max(1, Math.min(5000, deadline - Date.now())) });
       if (ready.ready === true && config.services.every(id => ready.services?.some(s => s.service_id === id && s.ready === true))) break;
       last = 'selected services are not ready';
     } catch (error) {
@@ -192,16 +200,26 @@ export async function configure(config, runtime) {
     await delay(Math.min(1000, Math.max(0, deadline - Date.now())));
   }
   if (Date.now() >= deadline) throw new Error(`LocalCloud readiness timed out after ${config.seconds}s: ${last}`);
-  const projects = await request(`${runtime.url}/projects`);
+  const projects = await call(`${runtime.url}/projects`);
   if (!Array.isArray(projects)) throw new Error('Unexpected LocalCloud projects response');
-  if (!projects.some(p => p.project_id === config.project)) await request(`${runtime.url}/projects`, { method: 'POST', body: { project_id: config.project, display_name: config.project } });
-  const env = await request(`${runtime.url}/env?format=json&project=${encodeURIComponent(config.project)}`);
+  if (!projects.some(p => p.project_id === config.project)) await call(`${runtime.url}/projects`, { method: 'POST', body: { project_id: config.project, display_name: config.project } });
+  const env = await call(`${runtime.url}/env?format=json&project=${encodeURIComponent(config.project)}`);
   runtime.canonicalEnv=env;
   const configured=environment(env, runtime);
   if(configured.GOOGLE_CLOUD_PROJECT!==config.project)throw Error('LocalCloud env returned the wrong project');
   if(config.mcp) {
-    const mcp=await request(`${runtime.url}/mcp`);
-    if(mcp.name!=='localcloud-mcp' || mcp.safety?.write_enabled!==false || mcp.safety?.destructive_enabled!==false)throw Error('MCP CI profile requires the same LocalCloud runtime with MCP write/destructive permissions disabled');
+    // LocalCloud lists its write and destructive MCP tools only when those permissions are on, so their absence
+    // shows the runtime is read-only for agents. create_project and delete_project stand for each group.
+    const rpc = async (id, method, params = {}) => {
+      const reply = await call(`${runtime.url}/mcp`, { method:'POST', body:{ jsonrpc:'2.0', id, method, params }, headers:{ 'X-LocalCloud-Project':config.project } });
+      if (reply?.jsonrpc !== '2.0' || reply.id !== id || reply.error || !reply.result) throw Error(`LocalCloud MCP ${method} failed: ${JSON.stringify(reply?.error || reply).slice(0,300)}`);
+      return reply.result;
+    };
+    const server = (await rpc(1, 'initialize', { protocolVersion:'2025-11-25', capabilities:{}, clientInfo:{ name:'setup-localcloud', version:'0.1.1' } })).serverInfo;
+    if (server?.name !== 'localcloud') throw Error('runtime-url does not serve the LocalCloud MCP server');
+    const tools = (await rpc(2, 'tools/list')).tools;
+    if (!Array.isArray(tools) || !tools.some(tool => tool?.name === 'localcloud_list_services')) throw Error('LocalCloud MCP returned an unexpected tool list');
+    if (tools.some(tool => ['localcloud_create_project','localcloud_delete_project'].includes(tool?.name))) throw Error('MCP CI profile requires the same LocalCloud runtime with MCP write/destructive permissions disabled');
   }
   return configured;
 }
@@ -255,7 +273,7 @@ export function jobFiles(config,runtime,env,base=process.env.RUNNER_TEMP || tmpd
   let mcpConfig='';
   if(config.mcp) {
     mcpConfig=join(directory,'mcp.json');
-    const connection={url:runtime.url,ports:runtime.ports,project:config.project};
+    const connection={url:runtime.url,ports:runtime.ports,project:config.project,...(config.controlToken?{token:config.controlToken}:{})};
     writeFileSync(mcpConfig,JSON.stringify({mcpServers:{localcloud:{command:process.execPath,args:[fileURLToPath(new URL('./mcp-stdio.mjs',import.meta.url))],env:{LOCALCLOUD_MCP_CONNECTION:JSON.stringify(connection)}}}},null,2)+'\n',{mode:0o600});
   }
   return {envFile,dockerEnvFile,mcpConfig};
@@ -298,6 +316,7 @@ export function cleanup(record, command = docker) {
 
 export async function main() {
   const config = options();
+  if (config.controlToken) console.log(`::add-mask::${config.controlToken}`);
   const runtime = startRuntime(config);
   try {
     const env = await configure(config, runtime);
@@ -307,7 +326,7 @@ export async function main() {
       githubFile(process.env.GITHUB_ENV, key, value);
     }
     for (const [key,value] of Object.entries({ 'runtime-url': runtime.url, 'container-id': runtime.record?.id || '', 'image-digest': runtime.imageDigest || '', 'project-id': config.project,network:runtime.network || '', 'env-file':files.envFile,'docker-env-file':files.dockerEnvFile,'mcp-url':config.mcp?`${runtime.url}/mcp`:'','mcp-config':files.mcpConfig })) githubFile(process.env.GITHUB_OUTPUT, key, value);
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### LocalCloud ready\n\nProject: \`${config.project}\`\n\nServices: ${config.services.join(', ')}\n\nGateway: ${runtime.url}\n\n${runtime.record ? `Image: \`${config.image}\`\n\nThis action removes its container and anonymous volume after the job.` : 'Existing runtime: lifecycle remains with its owner.'}\n`);
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### LocalCloud ready\n\nProject: \`${config.project}\`\n\nServices: ${config.services.join(', ')}\n\nGateway: ${runtime.url}\n\n${runtime.record ? `Image: \`${runtime.imageDigest || config.image}\`\n\nThis action removes its container and anonymous volume after the job.` : 'Existing runtime: lifecycle remains with its owner.'}\n`);
     console.log(`LocalCloud ready at ${runtime.url}; project ${config.project}; services ${config.services.join(', ')}`);
   } catch (error) {
     cleanup(runtime.record);

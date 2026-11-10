@@ -201,3 +201,43 @@ test('a failed container creation cleans up its same-named network and data volu
   });
   assert.ok(calls.some(args=>args.join(' ')==='network rm '+network));assert.ok(calls.some(args=>args.join(' ')==='volume rm '+volume));
 });
+
+function fakeRuntime(t, { token = '', tools = ['localcloud_list_services','localcloud_call_api','localcloud_query_data'], seen = [] } = {}) {
+  return api(t,(req,res)=>{
+    seen.push({url:req.url, token:req.headers['x-localcloud-control-token'] || ''});
+    res.setHeader('Content-Type','application/json');
+    if(token && !req.url.startsWith('/readiness') && req.headers['x-localcloud-control-token']!==token) { res.statusCode=401; return res.end('{"error":{"code":401,"message":"This LocalCloud route is part of the control plane and requires the control token."}}'); }
+    if(req.url==='/services') return res.end('{"services":[{"id":"gcs","env_var":"STORAGE_EMULATOR_HOST","enabled":true}]}');
+    if(req.url.startsWith('/readiness')) return res.end(JSON.stringify({ready:true,services:[{service_id:'gcs',ready:true}]}));
+    if(req.url==='/projects') return res.end('[{"project_id":"ci-project"}]');
+    if(req.url.startsWith('/env')) return res.end(JSON.stringify({GOOGLE_CLOUD_PROJECT:'ci-project',STORAGE_EMULATOR_HOST:'http://localhost:5382'}));
+    if(req.url==='/mcp' && req.method==='POST') {
+      let body='';req.on('data',chunk=>body+=chunk);
+      return req.on('end',()=>{
+        const message=JSON.parse(body);
+        const result=message.method==='initialize'?{protocolVersion:'2025-11-25',serverInfo:{name:'localcloud',version:'1.0.0'}}:{tools:tools.map(name=>({name}))};
+        res.end(JSON.stringify({jsonrpc:'2.0',id:message.id,result}));
+      });
+    }
+    res.statusCode=405;res.end('Method not allowed');
+  });
+}
+
+test('the control token is sent on every control request and a missing token names the input', async t => {
+  const token='t'.repeat(40);const seen=[];
+  const url=await fakeRuntime(t,{token,seen});
+  await configure({services:['gcs'],project:'ci-project',seconds:3,controlToken:token,mcp:true},{url,ports:{},record:null});
+  assert.ok(seen.length>4 && seen.every(request=>request.token===token));
+  await assert.rejects(configure({services:['gcs'],project:'ci-project',seconds:3},{url,ports:{},record:null}),/control-token input/);
+  assert.throws(()=>options({'INPUT_CONTROL-TOKEN':'short'}),/control-token/);
+  assert.throws(()=>options({'INPUT_CONTROL-TOKEN':'a b'.repeat(20)}),/control-token/);
+});
+
+test('MCP is checked over the protocol: write or destructive tools listed means permissions are on', async t => {
+  const ok=await fakeRuntime(t);
+  await configure({services:['gcs'],project:'ci-project',seconds:3,mcp:true},{url:ok,ports:{},record:null});
+  for (const extra of ['localcloud_create_project','localcloud_delete_project']) {
+    const url=await fakeRuntime(t,{tools:['localcloud_list_services',extra]});
+    await assert.rejects(configure({services:['gcs'],project:'ci-project',seconds:3,mcp:true},{url,ports:{},record:null}),/write\/destructive permissions disabled/);
+  }
+});

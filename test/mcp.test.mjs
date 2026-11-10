@@ -13,9 +13,9 @@ test('MCP forwarding sends project context to the existing runtime and rewrites 
     req.on('end',()=>{message=JSON.parse(text);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({jsonrpc:'2.0',id:7,result:{text:'PUBSUB_EMULATOR_HOST=localhost:5383'}}));});
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise(resolve=>server.close(resolve)));
-  const connection={url:`http://127.0.0.1:${server.address().port}`,project:'ci-project',ports:{'5383':15383}};
+  const connection={url:`http://127.0.0.1:${server.address().port}`,project:'ci-project',ports:{'5383':15383},token:'k'.repeat(40)};
   const result=await forward({jsonrpc:'2.0',id:7,method:'tools/call',params:{name:'localcloud_get_env'}},connection);
-  assert.equal(headers['x-localcloud-project'],'ci-project');assert.equal(message.id,7);
+  assert.equal(headers['x-localcloud-project'],'ci-project');assert.equal(headers['x-localcloud-control-token'],'k'.repeat(40));assert.equal(message.id,7);
   assert.equal(result.result.text,'PUBSUB_EMULATOR_HOST=127.0.0.1:15383');
 });
 
