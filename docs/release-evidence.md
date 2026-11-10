@@ -1,5 +1,21 @@
 # Release evidence
 
+## v0.1.1, 2026-11-10
+
+Runtime: `agentcloud/localcloud:ci` → `agentcloud/localcloud@sha256:0ff46e759a0ce80f1121348077a913a28a3b3403c67f93aa48b28ed287116c0e` (LocalCloud 0.1.17, linux/amd64 and linux/arm64), as logged by the action on every run.
+
+- Hosted pull-request qualification [42774667372](https://github.com/agent-local-cloud/setup-localcloud/actions/runs/42774667372), action commit `e5f31c1`: all jobs passed. That covers unit; managed Docker SDK; native service container; container job with MCP, remote access and control token; and the MCP, container-app and catalog profiles. It also covers rejected-service cleanup.
+- Dispatched full qualification [42774670377](https://github.com/agent-local-cloud/setup-localcloud/actions/runs/42774670377) on the same commit: the OCI cache warm and restore jobs passed after resolving `ci` to its digest.
+- Local ARM64 (colima): runner SDK, same-container and application-container SDK, MCP profile and cleanup passed against `:ci`.
+
+Native execution (opt-in, dispatch only) is not part of this release's qualification. Its failures are LocalCloud 0.1.17 runtime defects, not action defects, and fixes reach this action through the `ci` tag:
+
+- Cloud Run: a revision whose child container name exceeds 63 characters (for example service `ci-<12 hex>` in project `localcloud-ci`) is not resolvable on the job network, so the default TCP startup probe never connects and the deploy does not complete. Shorter names deploy in seconds.
+- Dataproc: cluster creation fails with `No such image: agentcloud/dataproc:2.3.34-debian12`; the runtime does not pull the cluster image.
+- GKE: passed in run 42772689591; failed in 42774670377 because the runtime reported the cluster `RUNNING` before k3s created the `default` service account.
+
+The action's own fix found here (cleanup now removes runtime children without a `config-hash` label) is covered by unit tests and a local Cloud Run run that left no containers, networks or volumes.
+
 ## Documentation update, 2026-10-09
 
 The guide and README use published v0.1.0 with explicit `services: gcs,pubsub,bigquery`; selecting BigQuery does not require a new action release. Local ARM64 checks against the already-cached exact 0.1.5 image digest passed with the v0.1.0 runtime implementation (`de6d236db036be4c8b96879392d22a1feb5047c6`): Storage upload/readback, Pub/Sub publish/pull/acknowledgement, BigQuery dataset/table/insert/query readback, and owned container/anonymous-volume removal. The documented Docker-only bootstrap also passed selected-service readiness, missing-project creation, and generated environment export inside that owned container. This inner-container bootstrap check does not establish native GitHub host networking or fresh registry pulls.
