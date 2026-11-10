@@ -12,7 +12,7 @@ export async function forward(message,connection,onMessage=()=>{}) {
   const target=new URL(connection.url);
   if(target.protocol!=='http:' || target.username || target.password || target.pathname!=='/' || /(^|\.)(googleapis\.com|google\.com|gcr\.io|pkg\.dev)$/i.test(target.hostname))throw Error('MCP requires the configured local HTTP runtime origin');
   if(!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(connection.project || ''))throw Error('Invalid MCP project');
-  const response=await fetch(`${target.origin}/mcp`,{method:'POST',redirect:'error',signal:AbortSignal.timeout(60_000),headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':connection.protocolVersion || '2025-11-25','X-LocalCloud-Project':connection.project,...(connection.session?{'MCP-Session-Id':connection.session}:{})},body:JSON.stringify(message)});
+  const response=await fetch(`${target.origin}/mcp`,{method:'POST',redirect:'error',signal:AbortSignal.timeout(60_000),headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':connection.protocolVersion || '2025-11-25','X-LocalCloud-Project':connection.project,...(connection.token?{'X-LocalCloud-Control-Token':connection.token}:{}),...(connection.session?{'MCP-Session-Id':connection.session}:{})},body:JSON.stringify(message)});
   if(!response.ok)throw Error(`LocalCloud MCP returned HTTP ${response.status}`);
   if(response.headers.get('mcp-session-id'))connection.session=response.headers.get('mcp-session-id');
   const request=typeof message.method==='string' && Object.hasOwn(message,'id');

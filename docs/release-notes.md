@@ -6,6 +6,7 @@
 - v0.1.0's default image (LocalCloud 0.1.5, `agentcloud/localcloud@sha256:88e85b86…`) is no longer on Docker Hub, so v0.1.0 fails to pull unless `image` is set. Upgrade to v0.1.1, or pass `image: agentcloud/localcloud@sha256:<digest>` on v0.1.0.
 - `image` accepts `agentcloud/localcloud:ci` or an image pinned with `@sha256:`; other tags are still refused. The `ci` tag is pulled on every run; the action logs the digest it resolved to and returns it as the new `image-digest` output. The container is started from the exact image that was pulled.
 - Runtime environment keys the action does not recognise are skipped with a warning instead of failing the job, so a newer `ci` runtime cannot break setup by reporting a new key. Unknown keys are never exported. `LOCALCLOUD_GATEWAY`, which current runtimes report, is exported and rewritten to the published gateway port.
+- Works with the current LocalCloud runtime's MCP and access rules. MCP is checked over the MCP protocol (`initialize` and `tools/list`); the old `GET /mcp` descriptor no longer exists. A new `control-token` input sends the runtime's control token, which LocalCloud requires on control routes whenever remote access is on (for example a container-job service with `LOCALCLOUD_MCP_ALLOW_REMOTE`). The token is masked and passed to the MCP bridge.
 - `image-cache` requires a digest-pinned `image`. The cache and mirror workflows resolve `ci` to its digest before caching or copying.
 
 ## Integration updates since v0.1.0

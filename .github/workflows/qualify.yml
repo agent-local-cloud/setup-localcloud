@@ -190,6 +190,8 @@ jobs:
           LOCALCLOUD_MCP_WRITE: 'false'
           LOCALCLOUD_MCP_DESTRUCTIVE: 'false'
           LOCALCLOUD_MCP_ALLOW_REMOTE: 'true'
+          # Remote access turns on control-token enforcement. A per-run value is enough on this isolated job network.
+          LOCALCLOUD_CONTROL_TOKEN: qualify-${{ github.run_id }}-${{ github.run_attempt }}-container-job
         options: --memory 4g
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -200,6 +202,7 @@ jobs:
           project-id: container-ci
           services: gcs,pubsub,bigquery
           mcp: 'true'
+          control-token: qualify-${{ github.run_id }}-${{ github.run_attempt }}-container-job
       - run: python -m pip install -r examples/requirements.txt -r examples/mcp-requirements.txt
       - run: python examples/python-smoke.py
       - run: python examples/mcp-smoke.py
