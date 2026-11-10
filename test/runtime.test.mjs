@@ -173,18 +173,24 @@ test('execution cleanup removes verified children and owned resources and reject
   const owner='12345678-1234-1234-1234-123456789abc';
   const network=`localcloud-ci-${owner}`,volume=`${network}-data`;
   const record={id:'a'.repeat(64),owner,network,volume,hash:ownershipHash(network,volume)};
-  for(const foreign of [false,true]) {
+  const owned={'com.localcloud.managed':'true','com.localcloud.volume-name':volume};
+  const variants={
+    'with config hash':{labels:{...owned,'com.localcloud.config-hash':record.hash},foreign:false},
+    'runtime child without config hash':{labels:owned,foreign:false},
+    'unlabelled':{labels:{},foreign:true},
+    'other config hash':{labels:{...owned,'com.localcloud.config-hash':'f'.repeat(64)},foreign:true},
+  };
+  for(const [name,{labels:childLabels,foreign}] of Object.entries(variants)) {
     const calls=[];
-    const expected={'com.localcloud.managed':'true','com.localcloud.volume-name':volume,'com.localcloud.config-hash':record.hash};
     const command=args=>{
       calls.push(args);
-      if(args[0]==='container' && args[1]==='inspect')return JSON.stringify([{Id:args[2],Config:{Labels:args[2]===record.id?{'cloud.local.setup-localcloud.owner':owner}:foreign?{}:expected}}]);
-      if(args[0]==='ps') {assert.ok(args.includes('--no-trunc'));return record.id+'\n'+'b'.repeat(64);}
-      if(args[1]==='inspect')return JSON.stringify([{Labels:{...expected,'cloud.local.setup-localcloud.owner':owner}}]);
+      if(args[0]==='container' && args[1]==='inspect')return JSON.stringify([{Id:args[2],Config:{Labels:args[2]===record.id?{'cloud.local.setup-localcloud.owner':owner}:childLabels}}]);
+      if(args[0]==='ps') {assert.ok(args.includes('--no-trunc'));assert.ok(!args.some(arg=>arg.startsWith('label=com.localcloud.config-hash')),name);return record.id+'\n'+'b'.repeat(64);}
+      if(args[1]==='inspect')return JSON.stringify([{Labels:{...owned,'com.localcloud.config-hash':record.hash,'cloud.local.setup-localcloud.owner':owner}}]);
       return '';
     };
-    if(foreign) {assert.throws(()=>cleanup(record,command),/another runtime/);assert.equal(calls.some(args=>args[0]==='rm'),false);}
-    else {cleanup(record,command);assert.ok(calls.some(args=>args.join(' ')==='network rm '+network));assert.ok(calls.some(args=>args.join(' ')==='volume rm '+volume));assert.ok(calls.some(args=>args.join(' ')==='rm -f -v '+'b'.repeat(64)));assert.equal(calls.filter(args=>args.join(' ')==='rm -f -v '+record.id).length,1);}
+    if(foreign) {assert.throws(()=>cleanup(record,command),/another runtime/,name);assert.equal(calls.some(args=>args[0]==='rm'),false,name);}
+    else {cleanup(record,command);assert.ok(calls.some(args=>args.join(' ')==='network rm '+network),name);assert.ok(calls.some(args=>args.join(' ')==='volume rm '+volume),name);assert.ok(calls.some(args=>args.join(' ')==='rm -f -v '+'b'.repeat(64)),name);assert.equal(calls.filter(args=>args.join(' ')==='rm -f -v '+record.id).length,1,name);}
   }
 });
 
