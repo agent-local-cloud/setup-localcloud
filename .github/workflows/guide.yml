@@ -15,7 +15,7 @@ jobs:
       - uses: ./.github/assert-cleanup
       - name: Start LocalCloud
         id: localcloud
-        uses: cloud-orbitor/setup-localcloud@v0.1.0
+        uses: cloud-orbitor/setup-localcloud@v0.1.1
         with:
           services: gcs,pubsub,bigquery
           project-id: localcloud-ci
@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 15
     services:
       localcloud:
-        image: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
+        image: agentcloud/localcloud:ci
         env:
           LOCALCLOUD_SERVICES: gcs,pubsub,bigquery
           LOCALCLOUD_PROJECT: localcloud-ci

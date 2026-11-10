@@ -6,7 +6,7 @@ Run Google Cloud application tests and AI-agent checks against the LocalCloud Do
 
 ## Quick start
 
-The published example uses `v0.1.0`. The consolidated update is being reviewed on `codex/ci-runtime-reliability`; its implementation and checks are mapped to all seven issues in [the resolution table](docs/issue-resolution.md) and [implementation plan](docs/superpowers/plans/2026-10-09-ci-runtime-reliability.md).
+The examples use `v0.1.1`, which runs the `agentcloud/localcloud:ci` image by default. LocalCloud moves that tag to each qualified release, so new LocalCloud versions need no action or workflow change. The implementation and checks for the integration backlog are mapped in [the resolution table](docs/issue-resolution.md).
 
 Save this as `.github/workflows/localcloud.yml`. It uses the already-published action with explicit service selection and verifies a local BigQuery query:
 
@@ -30,7 +30,7 @@ jobs:
           python-version: '3.12'
       - name: Start LocalCloud
         id: localcloud
-        uses: cloud-orbitor/setup-localcloud@v0.1.0
+        uses: cloud-orbitor/setup-localcloud@v0.1.1
         with:
           services: gcs,pubsub,bigquery
           project-id: localcloud-ci
@@ -65,7 +65,7 @@ For your application's suite, replace the SDK install/query steps with your depe
 
 For example: `services: gcs,pubsub,bigquery,bigtable,spanner,kms,secretmanager`.
 
-Always set the list explicitly. Published v0.1.0 includes Firestore in its default selection; Firestore is excluded from the examples here while the next release's defaults are reviewed.
+Always set the list explicitly. The default is `gcs,pubsub,bigquery`; Firestore is outside the examples and the tested profile.
 
 | Service guide | ID for services | Workflow notes |
 | --- | --- | --- |
@@ -100,13 +100,11 @@ This table is copied from the site-rendered guide. Follow each service guide for
 
 ## Runtime and lifecycle
 
-The following describes published `v0.1.0`; the preview features below extend its networking, execution and MCP configuration.
-
-- Pin the action to the full commit shown on its [release page](https://github.com/cloud-orbitor/setup-localcloud/releases/tag/v0.1.0) for immutable action identity. The runtime image is independently pinned by digest; use the `image` input to select another compatible immutable image.
+- Pin the action to the full commit shown on its [release page](https://github.com/cloud-orbitor/setup-localcloud/releases/tag/v0.1.1) for immutable action identity. The runtime image is chosen separately: the default `agentcloud/localcloud:ci` follows qualified LocalCloud releases, and the `image` input accepts a digest (`agentcloud/localcloud@sha256:…`) to freeze it. The digest each run used is logged and returned as `image-digest`. See [choose the LocalCloud image](docs/github-actions.md#choose-the-localcloud-image).
 - Automatic mode requires a Linux Docker runner, gives LocalCloud a 4 GiB limit, publishes TCP ports on loopback, and rewrites generated endpoints to those ports.
 - For a native service or independently started image, supply `runtime-url: http://host:5380` and canonical service ports. The runtime owner retains lifecycle control. The [full guide](docs/github-actions.md#use-the-image-without-the-action-or-cli) also shows setup without this action or the CLI.
-- Dataproc, Cloud Run and GKE execution need additional runtime dependencies. Automatic mode currently disables Docker access inside LocalCloud; use a configured runtime and check the relevant service guide.
-- Agents launched on the same runner inherit the SDK environment. MCP attachment is a separate integration; the action does not install or configure an MCP client.
+- Dataproc, Cloud Run and GKE execution need Docker access: set `docker-access: 'true'` (see below) and check the relevant service guide.
+- Agents launched on the same runner inherit the SDK environment. With `mcp: 'true'` the action writes a job-local read-only MCP configuration; it does not install an MCP client.
 - Normal post cleanup removes only the action-owned container and anonymous volume. Runner-loss recovery and container-job networking need their own checks.
 - Shared runners can hit Docker Hub's anonymous pull limit before startup. The guide covers [registry authentication](docs/github-actions.md#docker-hub-pull-limits); distribution reliability is tracked in [issue #6](https://github.com/cloud-orbitor/setup-localcloud/issues/6).
 
@@ -114,18 +112,16 @@ The following describes published `v0.1.0`; the preview features below extend it
 
 The adapter is MIT-licensed. The separately distributed image is governed by the [LocalCloud license](https://local.cloud/license/). Automatic mode disables runtime telemetry; see [privacy](https://local.cloud/docs/privacy/). Validate production-sensitive behavior against real Google Cloud before deployment.
 
-Report integration problems in [this repository's issues](https://github.com/cloud-orbitor/setup-localcloud/issues), with the action version, image digest, selected services, SDK versions, and sanitized errors. The [grouped integration backlog](https://github.com/cloud-orbitor/setup-localcloud/issues) is being collected for one consolidated update; v0.1.1 remains an unpublished draft.
+Report integration problems in [this repository's issues](https://github.com/cloud-orbitor/setup-localcloud/issues), with the action version, image digest, selected services, SDK versions, and sanitized errors. 
 
 ## Development and checks
 
-Use Node 24 and `node --test`. There are no npm runtime dependencies or generated bundles. [Guide checks](.github/workflows/guide.yml) exercise the documented published-action quick start and Docker-only bootstrap. [Consumer checks](.github/workflows/consumer.yml) exercise the published action. Candidate checks cover catalog configuration, runner/application-container SDKs, native execution, MCP and cleanup; optional cache and mirror workflows are explicitly dispatched. Exact run evidence lives in [docs/release-evidence.md](docs/release-evidence.md).
+Use Node 24 and `node --test`. There are no npm runtime dependencies or generated bundles. [Guide checks](.github/workflows/guide.yml) exercise the documented published-action quick start and Docker-only bootstrap against `agentcloud/localcloud:ci`. [Consumer checks](.github/workflows/consumer.yml) exercise the published action. Candidate checks cover catalog configuration, runner/application-container SDKs, native execution, MCP and cleanup; optional cache and mirror workflows are explicitly dispatched. Exact run evidence lives in [docs/release-evidence.md](docs/release-evidence.md).
 
-## Preview inputs and outputs
-
-These features require the reviewed preview branch or its commit, not the published `v0.1.0` tag:
+## More inputs and outputs
 
 ```yaml
-- uses: cloud-orbitor/setup-localcloud@codex/ci-runtime-reliability
+- uses: cloud-orbitor/setup-localcloud@v0.1.1
   id: localcloud
   with:
     services: gcs,pubsub,bigquery
@@ -135,11 +131,12 @@ These features require the reviewed preview branch or its commit, not the publis
 
 | Input | Purpose |
 | --- | --- |
-| `image-cache` | Optional restored OCI layout. The pinned root, platform, config and layers are verified before importing; otherwise use the Docker store or registry. |
+| `image` | Default `agentcloud/localcloud:ci`, pulled on every run. Pass `agentcloud/localcloud@sha256:<digest>` to freeze the runtime; other tags are refused. |
+| `image-cache` | Optional restored OCI layout; requires an `image` pinned by digest. The pinned root, platform, config and layers are verified before importing; otherwise use the Docker store or registry. |
 | `port-map` | Existing-runtime canonical-to-published JSON port mapping. For `runtime-url: http://127.0.0.1:15380`, use `'{"5380":15380,"5382":15382,"5383":15383,"5388":15388}'` for the example profile. |
 | `docker-access` | Default `'false'`; opt in to runner Docker socket access for native execution. Runtime prerequisites come from the image catalog. |
 | `mcp` | Default `'false'`; create a job-local read-only MCP configuration attached to this gateway/project. No CLI installation. |
 
-Outputs include `network`, `env-file`, `docker-env-file`, `mcp-url` and `mcp-config`, in addition to the gateway/container/project outputs. Use `docker-env-file` and the owned `network` when launching an application container; host loopback settings do not work inside it. The full guide explains the preview, lifecycle ownership and per-client SDK configuration.
+Outputs include `image-digest` (the exact image started, including what `ci` resolved to), `network`, `env-file`, `docker-env-file`, `mcp-url` and `mcp-config`, in addition to the gateway/container/project outputs. Use `docker-env-file` and the owned `network` when launching an application container; host loopback settings do not work inside it. The full guide explains lifecycle ownership and per-client SDK configuration.
 
-Image reuse keeps application state fresh. Persistent runners reuse the exact local image; standard hosted runners need a restored image cache or registry delivery across jobs. Native services start before cache/login steps. The opt-in [cache workflow](.github/workflows/cache.yml) demonstrates trusted cache production and restoration; benchmark disk usage and load time before enabling it everywhere. The [mirror workflow](.github/workflows/mirror.yml) preserves all source platforms/digests and must be published and anonymously verified before use as a public default.
+Image reuse keeps application state fresh. With a digest-pinned `image`, persistent runners reuse the exact local image; the `ci` tag is always pulled so it never runs an outdated release, though unchanged layers are reused; standard hosted runners need a restored image cache or registry delivery across jobs. Native services start before cache/login steps. The opt-in [cache workflow](.github/workflows/cache.yml) demonstrates trusted cache production and restoration; benchmark disk usage and load time before enabling it everywhere. The [mirror workflow](.github/workflows/mirror.yml) preserves all source platforms/digests and must be published and anonymously verified before use as a public default.

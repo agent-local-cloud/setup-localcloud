@@ -4,15 +4,15 @@ on:
     inputs:
       image:
         type: string
-        default: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
+        default: agentcloud/localcloud:ci
       runner:
         type: string
         default: ubuntu-24.04
   workflow_dispatch:
     inputs:
       image:
-        description: Immutable runtime image
-        default: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
+        description: Runtime image, agentcloud/localcloud:ci or an image pinned by digest; a tag is resolved to its digest first
+        default: agentcloud/localcloud:ci
       runner:
         description: Linux runner architecture
         type: choice
@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       cache-key: ${{ steps.key.outputs.key }}
+      image: ${{ steps.key.outputs.image }}
     env:
       LOCALCLOUD_CACHE_IMAGE: ${{ inputs.image }}
     steps:
@@ -33,8 +34,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
+      - run: sudo apt-get update && sudo apt-get install -y skopeo
       - id: key
+        name: Resolve the image to its digest and derive the cache key
         run: |
+          if [ "${LOCALCLOUD_CACHE_IMAGE#*@sha256:}" = "$LOCALCLOUD_CACHE_IMAGE" ]; then
+            digest=$(skopeo inspect --raw "docker://$LOCALCLOUD_CACHE_IMAGE" | sha256sum | cut -d ' ' -f 1)
+            LOCALCLOUD_CACHE_IMAGE="${LOCALCLOUD_CACHE_IMAGE%:*}@sha256:$digest"
+          fi
+          printf 'image=%s\n' "$LOCALCLOUD_CACHE_IMAGE" >> "$GITHUB_OUTPUT"
           identity=$(printf '%s' "$LOCALCLOUD_CACHE_IMAGE" | sha256sum | cut -d ' ' -f 1)
           printf 'key=localcloud-oci-v1-%s-%s-%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$identity" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -42,10 +50,10 @@ jobs:
         with:
           path: .local-test/oci-cache
           key: ${{ steps.key.outputs.key }}
-      - run: sudo apt-get update && sudo apt-get install -y skopeo
-        if: steps.restored.outputs.cache-hit != 'true'
       - name: Build a verified platform cache on a cold miss
         if: steps.restored.outputs.cache-hit != 'true'
+        env:
+          LOCALCLOUD_CACHE_IMAGE: ${{ steps.key.outputs.image }}
         run: node scripts/image-cache.mjs "$LOCALCLOUD_CACHE_IMAGE" .local-test/oci-cache
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         if: steps.restored.outputs.cache-hit != 'true'
@@ -57,7 +65,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     env:
-      INPUT_IMAGE: ${{ inputs.image }}
+      INPUT_IMAGE: ${{ needs.warm.outputs.image }}
       INPUT_SERVICES: gcs,pubsub,bigquery
       LOCALCLOUD_QUALIFICATION_REPORT: .local-test/cache-restore.json
     steps:

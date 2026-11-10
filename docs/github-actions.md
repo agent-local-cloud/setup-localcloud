@@ -46,7 +46,7 @@ jobs:
           python-version: '3.12'
       - name: Start LocalCloud
         id: localcloud
-        uses: cloud-orbitor/setup-localcloud@v0.1.0
+        uses: cloud-orbitor/setup-localcloud@v0.1.1
         with:
           services: gcs,pubsub,bigquery
           project-id: localcloud-ci
@@ -82,14 +82,14 @@ The action dynamically publishes the image’s TCP ports on loopback and rewrite
 `services` is the exact comma-separated set to start. It replaces the default selection; include every service your test needs. It accepts LocalCloud service IDs, not Google API domain names or display names.
 
 ```yaml
-- uses: cloud-orbitor/setup-localcloud@v0.1.0
+- uses: cloud-orbitor/setup-localcloud@v0.1.1
   with:
     services: gcs,pubsub,bigquery,bigtable,spanner,kms,secretmanager
     project-id: localcloud-ci
     timeout: '180'
 ```
 
-Changing this list does **not** require an action release. The three-service quick start is an example, not the action’s complete capability list. Always set `services` explicitly: the published v0.1.0 default includes Firestore, which is excluded from the examples in this guide.
+Changing this list does **not** require an action release. The three-service quick start is an example, not the action’s complete capability list. Always set `services` explicitly. The default is `gcs,pubsub,bigquery`; Firestore is excluded from the examples in this guide.
 
 The reference below uses the site’s service catalog. Follow each guide for SDK connection details, supported operations, and runtime requirements. The catalog describes LocalCloud; it does not mean every service workflow has been tested through this action.
 
@@ -130,9 +130,23 @@ The automatic setup action currently sets `LOCALCLOUD_DOCKER_ACCESS=false` and d
 
 ## Pin the action and runtime independently
 
-The examples use the published `v0.1.0` action. For immutable action pinning, replace the version tag with the full commit shown on the [release page](https://github.com/cloud-orbitor/setup-localcloud/releases/tag/v0.1.0). Pin checkout and language-setup actions the same way when your workflow requires immutable references. A version tag is easier to read but can be moved by its publisher.
+The examples use the published `v0.1.1` action. For immutable action pinning, replace the version tag with the full commit shown on the [release page](https://github.com/cloud-orbitor/setup-localcloud/releases/tag/v0.1.1). Pin checkout and language-setup actions the same way when your workflow requires immutable references. A version tag is easier to read but can be moved by its publisher.
 
-The action’s default image is LocalCloud 0.1.5, pinned to the multi-architecture digest used below. To choose another runtime, pass `image: agentcloud/localcloud@sha256:<your-verified-digest>` under `with`. Replace the placeholder with a real digest; the action rejects mutable image tags.
+
+## Choose the LocalCloud image
+
+By default the action runs `agentcloud/localcloud:ci`. LocalCloud moves the `ci` tag to each new release only after that release passes qualification, so your workflow picks up new LocalCloud releases without any change to the action or to your workflow. The action pulls the `ci` tag on every run, writes the digest it resolved to in the job log (`LocalCloud image agentcloud/localcloud:ci resolved to agentcloud/localcloud@sha256:…`) and returns it as the `image-digest` output, so every run records exactly which image it tested.
+
+To freeze the runtime instead, pin an image by digest:
+
+```yaml
+- uses: cloud-orbitor/setup-localcloud@v0.1.1
+  with:
+    services: gcs,pubsub,bigquery
+    image: agentcloud/localcloud@sha256:<digest>
+```
+
+Copy the digest from a previous run's `image-digest` output or from the image's tag page on Docker Hub. The action accepts only `agentcloud/localcloud:ci` or an image pinned with `@sha256:`; other tags such as `latest` are refused. `image-cache` needs a pinned digest.
 
 Service selection is configuration. A service added to a newer runtime can be selected with the existing action when that runtime retains compatible readiness, project, environment, and port contracts. Updating the action’s bundled defaults or handling a changed runtime contract is a separate action change.
 
@@ -140,7 +154,7 @@ Service selection is configuration. A service added to a newer runtime can be se
 | --- | --- |
 | `services` | Set the complete comma-separated ID list explicitly. |
 | `project-id` | Local project to create or select; default `localcloud-ci`. |
-| `image` | Immutable LocalCloud image digest; used when starting Docker. |
+| `image` | Default `agentcloud/localcloud:ci`. Or an image pinned with `@sha256:`; other tags are refused. Used when starting Docker. |
 | `timeout` | Selected-service readiness wait in seconds; default `120`, range `1`–`1800`. |
 | `runtime-url` | Leave empty for automatic startup, or supply an existing `http://host:5380` runtime with canonical ports. |
 
@@ -159,7 +173,7 @@ jobs:
     timeout-minutes: 15
     services:
       localcloud:
-        image: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
+        image: agentcloud/localcloud:ci
         env:
           LOCALCLOUD_SERVICES: gcs,pubsub,bigquery
           LOCALCLOUD_PROJECT: localcloud-ci
@@ -177,7 +191,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Configure the existing runtime
-        uses: cloud-orbitor/setup-localcloud@v0.1.0
+        uses: cloud-orbitor/setup-localcloud@v0.1.1
         with:
           runtime-url: http://127.0.0.1:5380
           services: gcs,pubsub,bigquery
@@ -332,32 +346,32 @@ credentials:
 
 GitHub documents [service-container registry authentication](https://docs.github.com/en/actions/tutorials/use-containerized-services/use-docker-service-containers#authenticating-with-image-registries). A registry mirror and reliable anonymous CI distribution are being gathered in the [action backlog](https://github.com/cloud-orbitor/setup-localcloud/issues).
 
-## Preview: image reuse, container applications and MCP
+## Image reuse, container applications and MCP
 
-The integration updates below are available on the action’s `codex/ci-runtime-reliability` branch while the next release is prepared. The published `v0.1.0` workflows above remain usable. Pin a reviewed commit when testing the preview; these inputs are not present in `v0.1.0`.
+These inputs and outputs were added in `v0.1.1`.
 
 ```yaml
 - name: Start the CI environment
   id: localcloud
-  uses: cloud-orbitor/setup-localcloud@codex/ci-runtime-reliability
+  uses: cloud-orbitor/setup-localcloud@v0.1.1
   with:
     services: gcs,pubsub,bigquery
     project-id: localcloud-ci
     mcp: 'true'
 ```
 
-| Preview input | Usage |
+| Input | Usage |
 | --- | --- |
-| `image-cache` | Path to a restored OCI image layout. The action verifies the requested digest, selected platform and image blobs before importing it. Omit for ordinary Docker image reuse. |
+| `image-cache` | Path to a restored OCI image layout. Requires `image` pinned by digest. The action verifies the requested digest, selected platform and image blobs before importing it. Omit for ordinary Docker image reuse. |
 | `port-map` | JSON canonical-to-published port mapping for an existing HTTP runtime, such as `{"5380":15380,"5382":15382,"5383":15383,"5388":15388}` with `runtime-url: http://127.0.0.1:15380`. Include every selected endpoint that uses a remapped listener. |
 | `docker-access` | Explicitly set `'true'` for native Dataproc, Cloud Run or GKE execution. This mounts the runner’s Docker socket and grants the runtime Docker host access. Keep it off for ordinary SDK tests. The runtime reports its own prerequisite requirements. |
 | `mcp` | Set `'true'` to generate a job-local read-only MCP configuration attached to this runtime and project. No CLI or second runtime is installed. |
 
 ### Reduce image pulls
 
-The preview checks for the exact pinned image and platform locally before pulling. Persistent Docker runners can reuse that image across jobs; each job still creates fresh application state. Standard GitHub-hosted runners start fresh, so they need a restored cache or registry distribution for reuse across jobs.
+For an image pinned by digest, the action checks for that exact image and platform locally before pulling. The default `ci` tag is pulled on every run so it never starts an outdated release; Docker still reuses layers it already has. Persistent Docker runners can reuse that image across jobs; each job still creates fresh application state. Standard GitHub-hosted runners start fresh, so they need a restored cache or registry distribution for reuse across jobs.
 
-For an optional cache, install Skopeo on the runner, restore an OCI layout with `actions/cache/restore`, and pass its directory through `image-cache`. Create a trusted cache with the action repository’s `scripts/image-cache.mjs`, using the pinned image and architecture. Keep an exact cache key containing the image identity, digest, OS, architecture and format version. Do not cache Docker credentials, daemon state or LocalCloud data volumes. Cache restore, integrity checking and image import take time and disk space; measure them before enabling caching everywhere.
+For an optional cache, install Skopeo on the runner, restore an OCI layout with `actions/cache/restore`, and pass its directory through `image-cache`. Create a trusted cache with the action repository’s `scripts/image-cache.mjs`, using the digest-pinned image and architecture (copy it from a run's `image-digest` output). Keep an exact cache key containing the image identity, digest, OS, architecture and format version. Do not cache Docker credentials, daemon state or LocalCloud data volumes. Cache restore, integrity checking and image import take time and disk space; measure them before enabling caching everywhere.
 
 Native `services:` and job-container images are pulled before workflow steps, so an ordinary cache or login step cannot intercept that initial pull. Configure service registry credentials or a verified registry mirror for those routes. The repository’s mirror workflow preserves image digests and all platforms; a mirror must be published and tested before using its address.
 
@@ -365,7 +379,7 @@ Group tests that can share one environment into a single job and cancel supersed
 
 ### Run an application container
 
-The preview exports `network` and `docker-env-file` outputs for its owned runtime. Start an application container on that network and pass the environment file:
+The action exports `network` and `docker-env-file` outputs for its owned runtime. Start an application container on that network and pass the environment file:
 
 ```yaml
 - name: Test an application image
@@ -385,7 +399,7 @@ With `mcp: 'true'`, pass `steps.localcloud.outputs.mcp-config` to a client suppo
 
 For native container jobs, use the service-name gateway and explicitly permit MCP traffic on that isolated job network in the service environment with `LOCALCLOUD_MCP_ALLOW_REMOTE: 'true'`. Keep both `LOCALCLOUD_MCP_WRITE` and `LOCALCLOUD_MCP_DESTRUCTIVE` false. Do not expose that service publicly.
 
-The preview’s checks cover SDK operations on the runner and in application containers, service-catalog configuration, real MCP client discovery/query and owned cleanup. Follow the [action evidence ledger](https://github.com/cloud-orbitor/setup-localcloud/blob/main/docs/release-evidence.md) for the tested revision and any runtime-specific limits.
+The action’s checks cover SDK operations on the runner and in application containers, service-catalog configuration, real MCP client discovery/query and owned cleanup. Follow the [action evidence ledger](https://github.com/cloud-orbitor/setup-localcloud/blob/main/docs/release-evidence.md) for the tested revision and any runtime-specific limits.
 
 ## Workflow evidence and support
 

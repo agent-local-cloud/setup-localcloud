@@ -22,8 +22,8 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: Immutable runtime image to qualify
-        default: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
+        description: Runtime image to qualify, agentcloud/localcloud:ci or an image pinned by digest
+        default: agentcloud/localcloud:ci
       native_execution:
         description: Also run Dataproc, Cloud Run and GKE workload checks
         type: boolean
@@ -72,7 +72,7 @@ jobs:
       matrix:
         profile: [mcp, container-app, catalog]
     env:
-      INPUT_IMAGE: ${{ inputs.image || 'agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c' }}
+      INPUT_IMAGE: ${{ inputs.image || 'agentcloud/localcloud:ci' }}
       INPUT_SERVICES: gcs,pubsub,bigquery
       LOCALCLOUD_QUALIFICATION_REPORT: .local-test/${{ matrix.profile }}.json
     steps:
@@ -134,7 +134,7 @@ jobs:
         uses: ./
         with:
           services: gcs,pubsub,bigquery
-          image: ${{ inputs.image || 'agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c' }}
+          image: ${{ inputs.image || 'agentcloud/localcloud:ci' }}
       - run: pip install -r examples/requirements.txt
       - run: python examples/python-smoke.py
       - name: Record owned resources for automatic post verification
@@ -148,7 +148,7 @@ jobs:
     timeout-minutes: 15
     services:
       localcloud:
-        image: ${{ inputs.image || 'agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c' }}
+        image: ${{ inputs.image || 'agentcloud/localcloud:ci' }}
         env:
           LOCALCLOUD_SERVICES: gcs,pubsub,bigquery
           LOCALCLOUD_PROJECT: native-ci
@@ -181,7 +181,7 @@ jobs:
     container: mcr.microsoft.com/devcontainers/python@sha256:0aa711e570b306c02946cdda67587ce8c65978dbb65691341cbcfd4854dfcfff
     services:
       localcloud:
-        image: ${{ inputs.image || 'agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c' }}
+        image: ${{ inputs.image || 'agentcloud/localcloud:ci' }}
         env:
           LOCALCLOUD_SERVICES: gcs,pubsub,bigquery
           LOCALCLOUD_PROJECT: container-ci
@@ -216,6 +216,6 @@ jobs:
           node-version: '24'
       - name: Assert catalog rejection before project mutation and verify cleanup
         env:
-          INPUT_IMAGE: ${{ inputs.image || 'agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c' }}
+          INPUT_IMAGE: ${{ inputs.image || 'agentcloud/localcloud:ci' }}
           LOCALCLOUD_QUALIFICATION_REPORT: .local-test/rejected-service.json
         run: node scripts/qualify.mjs --rejected-service

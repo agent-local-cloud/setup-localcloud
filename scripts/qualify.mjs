@@ -25,6 +25,7 @@ const run=(command,args,env=process.env)=>{
 };
 try {
   runtime=startRuntime(config,{command:acquisition});
+  report.image_digest=runtime.imageDigest || '';
   let env=await configure(config,runtime);
   if(flags.has('--catalog')) {
     config.services=runtime.catalog.filter(service=>service.id!=='firestore' && service.coverage_status!=='unsupported' && service.availability!=='unavailable' && service.startable!==false && !(service.runtime_dependencies || []).some(d=>d.required)).map(service=>service.id).sort();
