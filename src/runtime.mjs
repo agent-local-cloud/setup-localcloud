@@ -291,14 +291,17 @@ export function cleanup(record, command = docker) {
     if(record.network)command(['stop','--time','20',container.Id]);
   }
   if(record.network) {
-    const expected={'com.localcloud.managed':'true','com.localcloud.volume-name':record.volume,'com.localcloud.config-hash':record.hash};
+    // LocalCloud labels the containers it starts with managed and the job's unique data volume name. Newer runtimes do
+    // not stamp config-hash on them, so it is checked only when present.
+    const expected={'com.localcloud.managed':'true','com.localcloud.volume-name':record.volume};
     const children=command(['ps','-aq','--no-trunc',...Object.entries(expected).flatMap(([key,value])=>['--filter',`label=${key}=${value}`])]).split(/\s+/).filter(Boolean);
     for(const id of children) {
       if(id===container?.Id)continue;
       let child;
       try {child=JSON.parse(command(['container','inspect',id]))[0];}
       catch(error) {if(/No such (object|container)/i.test(error.message))continue;throw error;}
-      if(!Object.entries(expected).every(([key,value])=>child.Config.Labels?.[key]===value))throw Error('Refusing to remove a child owned by another runtime');
+      const labels=child.Config.Labels || {};
+      if(!Object.entries(expected).every(([key,value])=>labels[key]===value) || (labels['com.localcloud.config-hash'] !== undefined && labels['com.localcloud.config-hash']!==record.hash))throw Error('Refusing to remove a child owned by another runtime');
       command(['rm','-f','-v',child.Id]);
     }
   }
