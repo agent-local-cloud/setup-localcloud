@@ -6,10 +6,10 @@ branding:
   color: blue
 inputs:
   image:
-    description: LocalCloud image pinned to an immutable digest. Used when starting a container.
-    default: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
+    description: LocalCloud image used when starting a container. Either agentcloud/localcloud:ci, which LocalCloud moves to each qualified release, or an image pinned with @sha256:<digest>. The ci tag is pulled on every run; the resolved digest is logged and returned as image-digest.
+    default: agentcloud/localcloud:ci
   image-cache:
-    description: Optional restored OCI image layout created by scripts/image-cache.mjs. The pinned source and platform are verified before use.
+    description: Optional restored OCI image layout created by scripts/image-cache.mjs. Requires an image pinned by digest; the pinned source and platform are verified before use.
   services:
     description: Comma-separated service IDs. The release profile is gcs,pubsub,bigquery.
     default: gcs,pubsub,bigquery
@@ -35,6 +35,8 @@ outputs:
     description: Reachable LocalCloud gateway URL.
   container-id:
     description: Action-owned container ID, or empty for an existing runtime.
+  image-digest:
+    description: Registry digest of the image the action started (for the ci tag, the digest it resolved to), or empty for an existing runtime.
   project-id:
     description: Selected local project ID.
   network:

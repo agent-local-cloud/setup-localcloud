@@ -1,4 +1,4 @@
-name: Mirror the pinned LocalCloud runtime
+name: Mirror the LocalCloud ci runtime
 on:
   workflow_dispatch:
   workflow_call:
@@ -10,13 +10,15 @@ jobs:
     if: github.repository == 'cloud-orbitor/setup-localcloud'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      SOURCE_IMAGE: agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
-      DESTINATION_IMAGE: ghcr.io/cloud-orbitor/localcloud:sha-88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install the OCI transport
         run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Resolve agentcloud/localcloud:ci to the digest being mirrored
+        run: |
+          digest=$(skopeo inspect --raw docker://agentcloud/localcloud:ci | sha256sum | cut -d ' ' -f 1)
+          printf 'SOURCE_IMAGE=agentcloud/localcloud@sha256:%s\n' "$digest" >> "$GITHUB_ENV"
+          printf 'DESTINATION_IMAGE=ghcr.io/cloud-orbitor/localcloud:sha-%s\n' "$digest" >> "$GITHUB_ENV"
       - name: Authenticate without writing credentials to a cache
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -10,7 +10,18 @@ import { options, environment, configure, cleanup, startRuntime, githubFile, job
 test('invalid inputs fail before Docker or HTTP', () => {
   for (const env of [ {'INPUT_IMAGE':'agentcloud/localcloud:latest'}, {'INPUT_SERVICES':'gcs,;touch /tmp/x'}, {'INPUT_PROJECT-ID':'bad\nproject'}, {'INPUT_TIMEOUT':'Infinity'}, {'INPUT_RUNTIME-URL':'https://storage.googleapis.com'}, {'INPUT_RUNTIME-URL':'http://user:secret@localhost:5380'} ]) assert.throws(() => options(env));
   assert.equal(options({}).image, DEFAULT_IMAGE);
+  assert.equal(DEFAULT_IMAGE, 'agentcloud/localcloud:ci');
+  for (const image of ['agentcloud/localcloud:ci2', 'docker.io/agentcloud/localcloud:ci', 'other/localcloud:ci', 'agentcloud/localcloud']) assert.throws(() => options({INPUT_IMAGE:image}), /ci or pinned/);
+  assert.throws(() => options({'INPUT_IMAGE-CACHE':'/tmp/cache'}), /image-cache requires/);
+  assert.equal(options({INPUT_IMAGE:`agentcloud/localcloud@sha256:${'a'.repeat(64)}`,'INPUT_IMAGE-CACHE':'/tmp/cache'}).imageCache, '/tmp/cache');
   assert.deepEqual(options({}).services,['gcs','pubsub','bigquery']);
+});
+
+test('unknown runtime keys are skipped, never exported, and the gateway key is rewritten', () => {
+  const env = environment({ GOOGLE_CLOUD_PROJECT:'ci-project', NODE_OPTIONS:'--import bad.mjs', PATH:'/tmp', LOCALCLOUD_GATEWAY:'http://localhost:5380' }, { url:'http://127.0.0.1:6100', ports:{'5380':6100}, record:{} });
+  assert.deepEqual(Object.keys(env).sort(), ['GOOGLE_CLOUD_PROJECT','LOCALCLOUD_GATEWAY']);
+  assert.equal(env.LOCALCLOUD_GATEWAY, 'http://127.0.0.1:6100');
+  assert.throws(() => environment({ GOOGLE_CLOUD_PROJECT:'ci-project', LOCALCLOUD_GATEWAY:'http://example.com:5380' }, { url:'http://127.0.0.1:6100', ports:{'5380':6100}, record:{} }), /Nonlocal/);
 });
 
 test('SDK HTTP and gRPC addresses use actual published ports', () => {
@@ -42,7 +53,7 @@ test('catalog endpoint keys support Redis and dual REST/gRPC services without an
 
 test('production endpoints, environment injection and unpublished ports fail closed', () => {
   const runtime={url:'http://127.0.0.1:6100', ports:{'5380':6100},record:{}};
-  for (const payload of [ {GOOGLE_CLOUD_PROJECT:'ci-project', STORAGE_EMULATOR_HOST:'https://storage.googleapis.com'}, {GOOGLE_CLOUD_PROJECT:'ci-project', NODE_OPTIONS:'--import bad.mjs'}, {GOOGLE_CLOUD_PROJECT:'ci-project\nPATH=/tmp'}, {GOOGLE_CLOUD_PROJECT:'ci-project', PUBSUB_EMULATOR_HOST:'localhost:5383'} ]) assert.throws(() => environment(payload,runtime));
+  for (const payload of [ {GOOGLE_CLOUD_PROJECT:'ci-project', STORAGE_EMULATOR_HOST:'https://storage.googleapis.com'}, {GOOGLE_CLOUD_PROJECT:'ci-project\nPATH=/tmp'}, {GOOGLE_CLOUD_PROJECT:'ci-project', PUBSUB_EMULATOR_HOST:'localhost:5383'} ]) assert.throws(() => environment(payload,runtime));
 });
 
 test('GitHub files reject newline injection', () => {
@@ -72,6 +83,7 @@ test('owned Docker startup records actual ports and recovers publication failure
       const command=args=>{
         calls.push(args);
         if(args[0]==='version') return '{"Os":"linux","Arch":"amd64"}';
+        if(args[0]==='pull') return 'Digest: sha256:'+'c'.repeat(64);
         if(args[0]==='image') return JSON.stringify([{Id:'sha256:'+'a'.repeat(64),Os:'linux',Architecture:'amd64',Config:{ExposedPorts:{'5380/tcp':{},'5382/tcp':{}}}}]);
         if(args[0]==='run') { owner=args[args.indexOf('--label')+1].split('=')[1];return id; }
         if(args[0]==='container' && args[1]==='inspect') return JSON.stringify([{Id:id,Config:{Labels:{'cloud.local.setup-localcloud.owner':owner}},NetworkSettings:{Ports:{'5380/tcp':[{HostIp:broken?'0.0.0.0':'127.0.0.1',HostPort:'6100'}],'5382/tcp':[{HostIp:'127.0.0.1',HostPort:'6102'}]}}}]);
@@ -86,6 +98,8 @@ test('owned Docker startup records actual ports and recovers publication failure
         const runtime=startRuntime(options({}),{command,stateFile});
         assert.equal(runtime.url,'http://127.0.0.1:6100');
         assert.equal(runtime.ports['5382'],6102);
+        assert.equal(runtime.imageDigest,'agentcloud/localcloud@sha256:'+'c'.repeat(64));
+        assert.equal(calls.find(args=>args[0]==='run').at(-1),'sha256:'+'a'.repeat(64));
         assert.equal(JSON.parse(readFileSync(stateFile,'utf8').trim().split('\n').at(-1).split('=')[1]).id,id);
       }
     }

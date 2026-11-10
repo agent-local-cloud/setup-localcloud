@@ -7,8 +7,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const DEFAULT_IMAGE = 'agentcloud/localcloud@sha256:88e85b86b294e1e4f71b8c63ec43de79d170946ff39556f0e2709f66aa0d368c';
+// The ci tag is the one mutable reference the action accepts: LocalCloud moves it only to a released image that
+// passed qualification, so the action needs no change per release. Any other image must be pinned by digest.
+export const CI_IMAGE = 'agentcloud/localcloud:ci';
+export const DEFAULT_IMAGE = CI_IMAGE;
+const PINNED_IMAGE = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$/;
 const OWNER_LABEL = 'cloud.local.setup-localcloud.owner';
+const SKIPPED_KEYS = new Set();
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const CONTEXT_KEYS = new Set(['GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT', 'GOOGLE_PROJECT', 'CLOUDSDK_CORE_PROJECT', 'LOCALCLOUD_USER', 'LOCALCLOUD_PRINCIPAL', 'CLOUDSDK_AUTH_ACCESS_TOKEN', 'GOOGLE_OAUTH_ACCESS_TOKEN']);
 
@@ -21,7 +26,8 @@ export function options(env = process.env) {
   const seconds = Number(get('timeout', '120'));
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 1800) throw new Error('timeout must be 1–1800 seconds');
   const image = get('image', DEFAULT_IMAGE);
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$/.test(image)) throw new Error('image must be pinned with @sha256:<64 hex characters>');
+  if (image !== CI_IMAGE && !PINNED_IMAGE.test(image)) throw new Error(`image must be ${CI_IMAGE} or pinned with @sha256:<64 hex characters>`);
+  if (image === CI_IMAGE && get('image-cache')) throw new Error('image-cache requires an image pinned with @sha256:<64 hex characters>');
   let url = get('runtime-url');
   const ports = JSON.parse(get('port-map', '{}'));
   if (!ports || Array.isArray(ports) || typeof ports !== 'object' || Object.entries(ports).some(([key,value])=>!/^\d{1,5}$/.test(key) || Number(key)<1 || Number(key)>65535 || !Number.isInteger(value) || value<1 || value>65535)) throw Error('port-map must map canonical ports to integer ports between 1 and 65535');
@@ -59,43 +65,57 @@ export function acquireImage(config, command = docker) {
   if (platform.os !== 'linux' || !platform.architecture) throw Error('LocalCloud requires a Linux Docker server with a known architecture');
   let reference = config.image;
   let inspected;
-  try { inspected = command(['image', 'inspect', reference]); }
-  catch (error) {
-    if (!/No such image/i.test(error.message)) throw error;
-    if (config.imageCache) {
-      try {
-        reference = restoreOCI(config.imageCache, config.image, platform, command);
-        inspected = command(['image', 'inspect', reference]);
-      } catch (cacheError) {
-        console.error(`LocalCloud image cache unavailable; using pinned registry image: ${cacheError.message.slice(0,300)}`);
-        reference = config.image;
-      }
+  let pulled = '';
+  // The ci tag is always pulled, so a warm runner never keeps an outdated ci image.
+  const moving = config.image === CI_IMAGE;
+  if (!moving) {
+    try { inspected = command(['image', 'inspect', reference]); }
+    catch (error) { if (!/No such image/i.test(error.message)) throw error; }
+  }
+  if (!inspected && config.imageCache) {
+    try {
+      reference = restoreOCI(config.imageCache, config.image, platform, command);
+      inspected = command(['image', 'inspect', reference]);
+    } catch (cacheError) {
+      console.error(`LocalCloud image cache unavailable; using pinned registry image: ${cacheError.message.slice(0,300)}`);
+      reference = config.image;
     }
-    if (!inspected) {
-      try { command(['pull', '--platform', `${platform.os}/${platform.architecture}`, config.image]); }
-      catch (pullError) {
-        const guidance = /toomanyrequests|rate.?limit|429/i.test(pullError.message)
-          ? 'Registry limit reached. Configure registry credentials before setup or use a verified mirror; retrying immediately will not reset a quota.'
-          : /unauthorized|authentication|denied/i.test(pullError.message)
-            ? 'Registry authentication failed. Check docker login credentials and access to the requested image.'
-            : 'Image acquisition failed before LocalCloud startup. Check registry connectivity and the pinned digest.';
-        throw new Error(`${guidance}\n${pullError.message}`, {cause:pullError});
-      }
-      inspected = command(['image', 'inspect', config.image]);
+  }
+  if (!inspected) {
+    try { pulled = command(['pull', '--platform', `${platform.os}/${platform.architecture}`, config.image]); }
+    catch (pullError) {
+      const guidance = /toomanyrequests|rate.?limit|429/i.test(pullError.message)
+        ? 'Registry limit reached. Configure registry credentials before setup or use a verified mirror; retrying immediately will not reset a quota.'
+        : /unauthorized|authentication|denied/i.test(pullError.message)
+          ? 'Registry authentication failed. Check docker login credentials and access to the requested image.'
+          : 'Image acquisition failed before LocalCloud startup. Check registry connectivity and the image reference.';
+      throw new Error(`${guidance}\n${pullError.message}`, {cause:pullError});
     }
+    inspected = command(['image', 'inspect', config.image]);
   }
   const image = JSON.parse(inspected)[0];
   if (!image || !/^sha256:[a-f0-9]{64}$/.test(image.Id || '') || !image.Config) throw Error('Invalid Docker image inspection');
   if (image.Os !== platform.os || image.Architecture !== platform.architecture) throw Error(`LocalCloud image platform ${image.Os}/${image.Architecture} does not match Docker ${platform.os}/${platform.architecture}`);
   if (reference.startsWith('sha256:') && image.Id !== reference) throw Error('Loaded image configuration digest mismatch');
-  return {image, reference, platform};
+  let digest = config.image.includes('@') ? config.image : '';
+  if (moving) {
+    const repository = CI_IMAGE.split(':')[0];
+    const fromPull = /Digest:\s*(sha256:[a-f0-9]{64})/.exec(pulled || '')?.[1];
+    const recorded = (image.RepoDigests || []).map(d => d.replace(/^docker\.io\//, '')).filter(d => d.split('@')[0] === repository);
+    digest = fromPull ? `${repository}@${fromPull}` : recorded.length === 1 ? recorded[0] : '';
+    if (!PINNED_IMAGE.test(digest)) throw Error(`Could not resolve ${CI_IMAGE} to a registry digest`);
+    console.log(`LocalCloud image ${CI_IMAGE} resolved to ${digest}`);
+    // Run the exact image that was pulled, even if the local tag moves before docker run.
+    reference = image.Id;
+  }
+  return {image, reference, platform, digest};
 }
 
 export function startRuntime(config, { command = docker, stateFile = process.env.GITHUB_STATE } = {}) {
   if (config.url) return { url: config.url, ports: config.ports || {'5380':Number(new URL(config.url).port || 80)}, strictPorts:new URL(config.url).port !== '5380' || Object.keys(config.ports || {}).length>1, record: null };
   if (process.platform !== 'linux' && !process.env.LOCALCLOUD_ACTION_LOCAL_TEST) throw new Error('Starting LocalCloud requires a Linux Docker runner; use runtime-url to connect to an existing runtime');
   const owner = randomUUID();
-  const {image, reference, platform} = acquireImage(config, command);
+  const {image, reference, platform, digest} = acquireImage(config, command);
   const ports = Object.keys(image.Config.ExposedPorts || {}).filter(p => /^\d+\/tcp$/.test(p)).map(p => Number(p.split('/')[0]));
   if (!ports.includes(5380) || ports.length > 100 || ports.some(p => p < 1 || p > 65535)) throw new Error('Image must expose the LocalCloud gateway on 5380/tcp');
   const name = `localcloud-ci-${owner}`;
@@ -120,7 +140,7 @@ export function startRuntime(config, { command = docker, stateFile = process.env
       if (!bindings?.length || bindings[0].HostIp !== '127.0.0.1') throw new Error(`Missing loopback publication for ${port}`);
       return [String(port), Number(bindings[0].HostPort)];
     }));
-    return { url: `http://127.0.0.1:${mapped['5380']}`, ports: mapped, record, network:record.network, imageReference:reference, platform };
+    return { url: `http://127.0.0.1:${mapped['5380']}`, ports: mapped, record, network:record.network, imageReference:reference, imageDigest:digest, platform };
   } catch (error) {
     cleanup(record, command);
     throw error;
@@ -191,8 +211,13 @@ export function environment(payload, runtime) {
   const hostname = new URL(runtime.url).hostname;
   const result = {};
   for (const [key, value] of Object.entries(payload)) {
-    const endpoint = key.endsWith('_EMULATOR_HOST') || runtime.endpointKeys?.has(key) || key.startsWith('CLOUDSDK_API_ENDPOINT_OVERRIDES_') || /^GOOGLE_.+_CUSTOM_ENDPOINT$/.test(key) || /^LOCALCLOUD_[A-Z0-9]+_(GRPC_AUTHORITY|REST_URL)$/.test(key);
-    if (!endpoint && !CONTEXT_KEYS.has(key)) throw new Error(`Unsupported runtime environment key: ${key}`);
+    const endpoint = key === 'LOCALCLOUD_GATEWAY' || key.endsWith('_EMULATOR_HOST') || runtime.endpointKeys?.has(key) || key.startsWith('CLOUDSDK_API_ENDPOINT_OVERRIDES_') || /^GOOGLE_.+_CUSTOM_ENDPOINT$/.test(key) || /^LOCALCLOUD_[A-Z0-9]+_(GRPC_AUTHORITY|REST_URL)$/.test(key);
+    // The default ci image moves to newer runtimes, which may report keys this action does not know yet. Skip them
+    // rather than fail the job; only known context and endpoint keys are ever exported.
+    if (!endpoint && !CONTEXT_KEYS.has(key)) {
+      if (!SKIPPED_KEYS.has(key)) { SKIPPED_KEYS.add(key); console.warn(`Skipping runtime environment key this action does not recognise: ${key}`); }
+      continue;
+    }
     if (typeof value !== 'string' || /[\r\n\0]/.test(value) || !/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid runtime environment value: ${key}`);
     if (endpoint) {
       const hasScheme = /^https?:\/\//.test(value);
@@ -281,7 +306,7 @@ export async function main() {
       if (/TOKEN/.test(key)) console.log(`::add-mask::${value}`);
       githubFile(process.env.GITHUB_ENV, key, value);
     }
-    for (const [key,value] of Object.entries({ 'runtime-url': runtime.url, 'container-id': runtime.record?.id || '', 'project-id': config.project,network:runtime.network || '', 'env-file':files.envFile,'docker-env-file':files.dockerEnvFile,'mcp-url':config.mcp?`${runtime.url}/mcp`:'','mcp-config':files.mcpConfig })) githubFile(process.env.GITHUB_OUTPUT, key, value);
+    for (const [key,value] of Object.entries({ 'runtime-url': runtime.url, 'container-id': runtime.record?.id || '', 'image-digest': runtime.imageDigest || '', 'project-id': config.project,network:runtime.network || '', 'env-file':files.envFile,'docker-env-file':files.dockerEnvFile,'mcp-url':config.mcp?`${runtime.url}/mcp`:'','mcp-config':files.mcpConfig })) githubFile(process.env.GITHUB_OUTPUT, key, value);
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### LocalCloud ready\n\nProject: \`${config.project}\`\n\nServices: ${config.services.join(', ')}\n\nGateway: ${runtime.url}\n\n${runtime.record ? `Image: \`${config.image}\`\n\nThis action removes its container and anonymous volume after the job.` : 'Existing runtime: lifecycle remains with its owner.'}\n`);
     console.log(`LocalCloud ready at ${runtime.url}; project ${config.project}; services ${config.services.join(', ')}`);
   } catch (error) {
