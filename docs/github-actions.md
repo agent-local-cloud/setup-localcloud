@@ -431,3 +431,14 @@ The action’s [evidence ledger](https://github.com/cloud-orbitor/setup-localclo
 The action adapter is MIT-licensed. The separately distributed runtime is governed by the [LocalCloud license](https://local.cloud/license/). Automatic mode disables runtime telemetry; existing-runtime preferences remain with its owner. See [privacy and outbound behavior](https://local.cloud/docs/privacy/). Validate production-sensitive behavior against real Google Cloud before deployment.
 
 Report integration issues in [cloud-orbitor/setup-localcloud](https://github.com/cloud-orbitor/setup-localcloud/issues), including the workflow, action commit, image digest, selected services, SDK versions, and sanitized error output. Do not include credentials.
+
+### Headless CI
+
+Action-owned runtimes disable the Console by default (`console: 'false'`), using
+`LOCALCLOUD_CONSOLE=false` in the container. Service and admin APIs, readiness,
+SDK exports and owned post cleanup remain available. Set `console: 'true'`
+only when a job needs the web UI. Existing runtimes retain their owner's
+configuration; the Action never changes it. For a native GitHub service or direct
+Docker invocation, set `LOCALCLOUD_CONSOLE: 'false'` on the container. The CLI
+equivalent is `localcloud start --no-ui`. This setting does not reduce image
+download size; no startup speed improvement is claimed without measurement.

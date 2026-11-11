@@ -17,6 +17,12 @@ test('invalid inputs fail before Docker or HTTP', () => {
   assert.deepEqual(options({}).services,['gcs','pubsub','bigquery']);
 });
 
+test('console defaults off, supports explicit opt-in and rejects malformed values', () => {
+  assert.equal(options({}).console,false);
+  assert.equal(options({'INPUT_CONSOLE':'true'}).console,true);
+  for (const value of ['1','False','yes']) assert.throws(()=>options({'INPUT_CONSOLE':value}),/console must be true or false/);
+});
+
 test('unknown runtime keys are skipped, never exported, and the gateway key is rewritten', () => {
   const env = environment({ GOOGLE_CLOUD_PROJECT:'ci-project', NODE_OPTIONS:'--import bad.mjs', PATH:'/tmp', LOCALCLOUD_GATEWAY:'http://localhost:5380' }, { url:'http://127.0.0.1:6100', ports:{'5380':6100}, record:{} });
   assert.deepEqual(Object.keys(env).sort(), ['GOOGLE_CLOUD_PROJECT','LOCALCLOUD_GATEWAY']);
@@ -78,7 +84,7 @@ test('owned Docker startup records actual ports and recovers publication failure
   const old=process.env.LOCALCLOUD_ACTION_LOCAL_TEST;
   process.env.LOCALCLOUD_ACTION_LOCAL_TEST='1';
   try {
-    for (const broken of [false,true]) {
+    for (const [broken,consoleEnabled] of [[false,false],[false,true],[true,false]]) {
       const calls=[];let owner='';const id='b'.repeat(64);const stateFile=join(dir,String(broken));
       const command=args=>{
         calls.push(args);
@@ -95,11 +101,12 @@ test('owned Docker startup records actual ports and recovers publication failure
         assert.throws(()=>startRuntime(options({}),{command,stateFile}),/loopback publication/);
         assert.ok(calls.some(args=>args.join(' ')==='rm -f -v '+id));
       } else {
-        const runtime=startRuntime(options({}),{command,stateFile});
+        const runtime=startRuntime(options({'INPUT_CONSOLE':String(consoleEnabled)}),{command,stateFile});
         assert.equal(runtime.url,'http://127.0.0.1:6100');
         assert.equal(runtime.ports['5382'],6102);
         assert.equal(runtime.imageDigest,'agentcloud/localcloud@sha256:'+'c'.repeat(64));
         assert.equal(calls.find(args=>args[0]==='run').at(-1),'sha256:'+'a'.repeat(64));
+        assert.ok(calls.find(args=>args[0]==='run').includes(`LOCALCLOUD_CONSOLE=${consoleEnabled}`));
         assert.equal(JSON.parse(readFileSync(stateFile,'utf8').trim().split('\n').at(-1).split('=')[1]).id,id);
       }
     }

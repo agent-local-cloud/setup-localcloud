@@ -10,6 +10,9 @@ inputs:
     default: agentcloud/localcloud:ci
   image-cache:
     description: Optional restored OCI image layout created by scripts/image-cache.mjs. Requires an image pinned by digest; the pinned source and platform are verified before use.
+  console:
+    description: Serve the web console in an Action-owned runtime. Disabled by default for API-only CI. Does not change an existing runtime supplied through runtime-url.
+    default: 'false'
   services:
     description: Comma-separated service IDs. The release profile is gcs,pubsub,bigquery.
     default: gcs,pubsub,bigquery

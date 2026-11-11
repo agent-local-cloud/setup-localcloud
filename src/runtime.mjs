@@ -46,7 +46,7 @@ export function options(env = process.env) {
   // LocalCloud's control-token rules: at least 32 printable ASCII characters, none of space " , ; or \.
   if (controlToken && (controlToken.length < 32 || !/^[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]+$/.test(controlToken))) throw Error('control-token must be at least 32 printable ASCII characters without spaces, double quotes, commas, semicolons or backslashes');
   const boolean = name => {const value=get(name,'false');if(!['true','false'].includes(value))throw Error(`${name} must be true or false`);return value==='true';};
-  return { services, project, seconds, image, url, ports, imageCache:get('image-cache'), controlToken, dockerAccess:boolean('docker-access'), mcp:boolean('mcp') };
+  return { services, project, seconds, image, url, ports, imageCache:get('image-cache'), controlToken, console:boolean('console'), dockerAccess:boolean('docker-access'), mcp:boolean('mcp') };
 }
 
 export function docker(args) {
@@ -129,6 +129,7 @@ export function startRuntime(config, { command = docker, stateFile = process.env
   const labels={[OWNER_LABEL]:owner,'com.localcloud.managed':'true','com.localcloud.volume-name':record.volume,'com.localcloud.config-hash':record.hash};
   const labelArgs=Object.entries(labels).flatMap(([key,value])=>['--label',`${key}=${value}`]);
   const args = ['run', '--platform', `${platform.os}/${platform.architecture}`, '-d', '--pull', 'never', '--name', name, ...labelArgs, '--network',record.network,'--network-alias','localcloud','--mount',`type=volume,src=${record.volume},dst=/var/lib/localcloud`, '--memory', '4g', '-e', `LOCALCLOUD_SERVICES=${config.services.join(',')}`, '-e', `LOCALCLOUD_PROJECT=${config.project}`, '-e', `LOCALCLOUD_DOCKER_ACCESS=${config.dockerAccess}`, '-e', 'LOCALCLOUD_TELEMETRY=false','-e',`LOCALCLOUD_RUNTIME_NETWORK=${record.network}`,'-e',`LOCALCLOUD_DATA_VOLUME=${record.volume}`,'-e',`LOCALCLOUD_CONFIG_HASH=${record.hash}`,'-e','LOCALCLOUD_MCP_WRITE=false','-e','LOCALCLOUD_MCP_DESTRUCTIVE=false'];
+  args.push('-e', `LOCALCLOUD_CONSOLE=${config.console}`);
   if(config.controlToken) args.push('-e',`LOCALCLOUD_CONTROL_TOKEN=${config.controlToken}`);
   if(config.dockerAccess) args.push('--mount','type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock','-e','DOCKER_HOST=unix:///var/run/docker.sock');
   for (const port of ports) args.push('-p', `127.0.0.1::${port}`);

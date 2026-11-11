@@ -132,6 +132,7 @@ Use Node 24 and `node --test`. There are no npm runtime dependencies or generate
 | Input | Purpose |
 | --- | --- |
 | `image` | Default `agentcloud/localcloud:ci`, pulled on every run. Pass `agentcloud/localcloud@sha256:<digest>` to freeze the runtime; other tags are refused. |
+| `console` | Default `'false'` for API-only CI. Set `'true'` to serve the console in the Action-owned runtime. With `runtime-url`, configure the existing owner's container instead. |
 | `image-cache` | Optional restored OCI layout; requires an `image` pinned by digest. The pinned root, platform, config and layers are verified before importing; otherwise use the Docker store or registry. |
 | `port-map` | Existing-runtime canonical-to-published JSON port mapping. For `runtime-url: http://127.0.0.1:15380`, use `'{"5380":15380,"5382":15382,"5383":15383,"5388":15388}'` for the example profile. |
 | `docker-access` | Default `'false'`; opt in to runner Docker socket access for native execution. Runtime prerequisites come from the image catalog. |
